@@ -1,8 +1,8 @@
 -- +goose Up
 -- +goose StatementBegin
 CREATE TABLE users (
-                       id bigserial PRIMARY KEY,
-                       telegram_id bigint UNIQUE NOT NULL,
+                       id bigint not null,
+                       telegram_id bigint NOT NULL,
                        username varchar(32),
                        gender char(1) NOT NULL CHECK (gender IN ('m', 'f')),
                        age integer NOT NULL CHECK (age >= 18 AND age <= 100),
@@ -13,8 +13,23 @@ CREATE TABLE users (
                        is_premium boolean DEFAULT FALSE,
                        created_at timestamp with time zone DEFAULT now(),
                        updated_at timestamp with time zone DEFAULT now(),
-                       hash_key bigint GENERATED ALWAYS AS (telegram_id % 16) STORED
+                       hash_key bigint NOT NULL,
+                       PRIMARY KEY (id, hash_key),
+                       UNIQUE (telegram_id, hash_key)  -- Добавляем hash_key в UNIQUE ограничение
 ) PARTITION BY LIST (hash_key);
+
+-- Триггер для автоматического вычисления hash_key
+CREATE OR REPLACE FUNCTION set_user_hash()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.hash_key := NEW.telegram_id % 16;
+RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_user_hash
+    BEFORE INSERT OR UPDATE ON users
+                         FOR EACH ROW EXECUTE FUNCTION set_user_hash();
 
 DO $$
 BEGIN
@@ -25,8 +40,6 @@ EXECUTE format('CREATE INDEX CONCURRENTLY idx_users_city_id_p%s ON users_p%s(cit
 END LOOP;
 END;
 $$;
-
-CREATE UNIQUE INDEX idx_users_telegram_id ON users(telegram_id);
 -- +goose StatementEnd
 
 -- +goose Down

@@ -8,7 +8,7 @@ docker-down:
 	$(info #down docker...)
 	docker compose -p "$(CI_PROJECT_ID)" -f docker-compose.yml down
 
-export PG_DB_DSN=host=localhost port=5432 user=test password=password database=test
+export PG_DB_DSN=host=localhost port=6432 user=test password=password database=dating
 
 .PHONY: migrate-up
 migrate-up:

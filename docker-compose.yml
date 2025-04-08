@@ -1,7 +1,7 @@
 version: '3'
 services:
   db:
-    image: postgres
+    image: kartoza/postgis
     ports:
       - "6432:5432"
     environment:
