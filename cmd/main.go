@@ -25,8 +25,8 @@ func main() {
 	defer runner.Close()
 	sq := squirrel.StatementBuilder.PlaceholderFormat(squirrel.Dollar)
 
-	profileQuery := db.NewProfilesQuery(runner, sq)
-	fmt.Println(profileQuery.GetByID(ctx, 1))
+	userQuery := db.NewUserQuery(runner, sq)
+	fmt.Println(userQuery.GetByID(ctx, 1))
 }
 
 func initDB(cfg config.AppConfig) (*sql.DB, error) {
