@@ -15,14 +15,12 @@ const (
 	CitiesID       = "id"
 	CitiesName     = "name"
 	CitiesLocation = "location"
-	CitiesCountry  = "country"
 )
 
 type City struct {
 	ID       int64  `db:"id" insert:"id"`
 	Name     string `db:"name" insert:"name" update:"name"`
 	Location string `db:"location" insert:"location" update:"location"`
-	Country  string `db:"country" insert:"country" update:"country"`
 }
 
 var (

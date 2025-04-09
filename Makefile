@@ -6,17 +6,21 @@ docker-up:
 .PHONY: docker-down
 docker-down:
 	$(info #down docker...)
-	docker compose -p "$(CI_PROJECT_ID)" -f docker-compose.yml down
+	docker compose -p "$(CI_PROJECT_ID)" -f docker-compose.yml down -v
 
-export PG_DB_DSN=host=localhost port=5432 user=test password=password database=test
+export PG_DB_DSN=PG_DB_DSN = host=localhost port=5433 user=postgres password=postgres database=postgres sslmode=disable
+
+GOOSE_BIN = $(shell go env GOPATH)/bin/goose
+PG_DB_DSN = host=localhost port=5433 user=postgres password=postgres database=postgres sslmode=disable
 
 .PHONY: migrate-up
 migrate-up:
-	goose -dir migrations/ -allow-missing postgres "$(PG_DB_DSN)" up
+	$(GOOSE_BIN) -dir migrations/ -allow-missing postgres "$(PG_DB_DSN)" up
 
 .PHONY: migrate-down
 migrate-down:
-	goose -dir migrations/ -allow-missing postgres "$(PG_DB_DSN)" down
+	$(GOOSE_BIN) -dir migrations/ -allow-missing postgres "$(PG_DB_DSN)" down
+
 
 .PHONY: migrate-reset
 migrate-reset:

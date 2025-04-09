@@ -24,7 +24,6 @@ const (
 	UsersIsPremium    = "is_premium"
 	UsersCreatedAt    = "created_at"
 	UsersUpdatedAt    = "updated_at"
-	UsersHashKey      = "hash_key"
 )
 
 type User struct {
@@ -40,7 +39,6 @@ type User struct {
 	IsPremium    bool    `db:"is_premium" insert:"is_premium" update:"is_premium"`
 	CreatedAt    string  `db:"created_at"`
 	UpdatedAt    string  `db:"updated_at"`
-	HashKey      int64   `db:"hash_key" insert:"hash_key"`
 }
 
 var (

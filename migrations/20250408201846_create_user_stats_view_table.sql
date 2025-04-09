@@ -3,15 +3,13 @@
 CREATE MATERIALIZED VIEW user_stats AS
 SELECT
     gender,
-    country,
-    region,
     FLOOR(age / 10) * 10 AS age_group,
     COUNT(*) AS user_count,
     COUNT(*) FILTER (WHERE is_premium) AS premium_count
 FROM users
          JOIN cities ON users.city_id = cities.id
 WHERE is_active = TRUE
-GROUP BY gender, country, region, FLOOR(age / 10) * 10
+GROUP BY gender, FLOOR(age / 10) * 10
     WITH DATA;
 
 SELECT cron.schedule(

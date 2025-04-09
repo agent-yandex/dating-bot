@@ -1,11 +1,19 @@
-version: '3'
 services:
   db:
-    image: postgres
+    image: kartoza/postgis:14-3.3
     ports:
-      - "6432:5432"
+      - "5433:5432"
     environment:
-      POSTGRES_USER: test
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: dating
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+      POSTGRES_MULTIPLE_DATABASES: postgres
     container_name: dating_bot_db
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - ./config/RU.txt:/RU.txt
+    restart: unless-stopped
