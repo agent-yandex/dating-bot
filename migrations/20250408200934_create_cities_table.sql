@@ -1,16 +1,13 @@
 -- +goose Up
 -- +goose StatementBegin
--- Создание основной таблицы cities
 CREATE TABLE cities (
     id serial PRIMARY KEY,
-    name varchar(10000) NOT NULL,  -- Увеличен размер до 300 символов
+    name varchar(200) NOT NULL,
     location geography(POINT, 4326) NOT NULL
 ) WITH (fillfactor = 90);
 
--- Создание GIST-индекса для поля location
 CREATE INDEX idx_cities_location ON cities USING GIST(location);
 
--- Создание временной таблицы для импорта данных из GeoNames RU
 CREATE TABLE temp_geonames (
     geonameid int,
     name varchar(200),
@@ -33,7 +30,6 @@ CREATE TABLE temp_geonames (
     modification_date date
 );
 
--- Импорт данных из файла RU.txt
 COPY temp_geonames (
     geonameid, name, asciiname, alternatenames, latitude, longitude,
     feature_class, feature_code, country_code, cc2, admin1_code,
@@ -41,7 +37,6 @@ COPY temp_geonames (
     dem, timezone, modification_date
 ) FROM '/RU.txt' DELIMITER E'\t' NULL '';
 
--- Перенос только городов (feature_class = 'P') в таблицу cities
 INSERT INTO cities (name, location)
 SELECT 
     RTRIM(REGEXP_REPLACE(SPLIT_PART(alternatenames, ',', -1), '[()]', '', 'g')) AS alt,
@@ -53,7 +48,6 @@ AND alternatenames IS NOT NULL
 AND latitude IS NOT NULL
 AND longitude IS NOT NULL;
 
--- Удаление временной таблицы
 DROP TABLE temp_geonames;
 -- +goose StatementEnd
 
