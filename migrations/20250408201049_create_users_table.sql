@@ -2,7 +2,6 @@
 -- +goose StatementBegin
 CREATE TABLE users (
     id bigint not null PRIMARY KEY,
-    telegram_id bigint NOT NULL UNIQUE,
     username varchar(32),
     gender char(1) NOT NULL CHECK (gender IN ('m', 'f')),
     age integer NOT NULL CHECK (age >= 10 AND age <= 100),
