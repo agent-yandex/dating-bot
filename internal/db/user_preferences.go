@@ -6,7 +6,6 @@ import (
 
 	"github.com/Masterminds/squirrel"
 	"github.com/elgris/stom"
-	"github.com/georgysavva/scany/v2/sqlscan"
 )
 
 const UserPreferencesTable = "user_preferences"
@@ -25,7 +24,7 @@ type UserPreference struct {
 	MinAge      int    `db:"min_age" insert:"min_age" update:"min_age"`
 	MaxAge      int    `db:"max_age" insert:"max_age" update:"max_age"`
 	GenderPref  string `db:"gender_preference" insert:"gender_preference" update:"gender_preference"`
-	MaxDistance int    `db:"max_distance_km" insert:"MaxDistance" update:"MaxDistance"`
+	MaxDistance int    `db:"max_distance_km" insert:"max_distance_km" update:"max_distance_km"`
 	UpdatedAt   string `db:"updated_at"`
 }
 
@@ -35,7 +34,11 @@ var (
 	stomPrefInsert = stom.MustNewStom(UserPreference{}).SetTag(insertTag)
 )
 
-func (up *UserPreference) columns(pref string) []string {
+func (up UserPreference) getTableName() string {
+	return UserPreferencesTable
+}
+
+func (up UserPreference) columns(pref string) []string {
 	return colNamesWithPref(
 		stomPrefSelect.TagValues(),
 		pref,
@@ -44,6 +47,8 @@ func (up *UserPreference) columns(pref string) []string {
 
 type UserPreferencesQuery interface {
 	GetByUserID(ctx context.Context, userID int64) (*UserPreference, error)
+	Insert(ctx context.Context, pref *UserPreference) (int64, error)
+	Update(ctx context.Context, pref *UserPreference) error
 }
 
 type userPreferencesQuery struct {
@@ -59,14 +64,26 @@ func NewUserPreferencesQuery(runner *sql.DB, sq squirrel.StatementBuilderType) U
 }
 
 func (up *userPreferencesQuery) GetByUserID(ctx context.Context, userID int64) (*UserPreference, error) {
-	pref := &UserPreference{}
-	qb, args, err := up.sq.Select(pref.columns("")...).
-		From(UserPreferencesTable).
-		Where(squirrel.Eq{UserPreferencesUserID: userID}).
+	return getByID[UserPreference](ctx, up.runner, up.sq, UserPreferencesUserID, userID)
+}
+
+func (up *userPreferencesQuery) Insert(ctx context.Context, pref *UserPreference) (int64, error) {
+	return insert(ctx, up.runner, up.sq, pref)
+}
+
+func (up *userPreferencesQuery) Update(ctx context.Context, pref *UserPreference) error {
+	updateMap, err := stomPrefUpdate.ToMap(pref)
+	if err != nil {
+		return err
+	}
+	qb, args, err := up.sq.Update(UserPreferencesTable).
+		SetMap(updateMap).
+		Where(squirrel.Eq{UserPreferencesUserID: pref.UserID}).
 		ToSql()
 	if err != nil {
-		return nil, err
+		return err
 	}
+	_, err = up.runner.ExecContext(ctx, qb, args...)
 
-	return pref, sqlscan.Get(ctx, up.runner, pref, qb, args...)
+	return err
 }
