@@ -83,7 +83,22 @@ func (l likeQuery) GetAllByToUserID(ctx context.Context, userID int64) ([]*Like,
 }
 
 func (l likeQuery) Insert(ctx context.Context, like *Like) (int64, error) {
-	return insert(ctx, l.runner, l.sq, like)
+	insertMap, err := stomLikeInsert.ToMap(like)
+	if err != nil {
+		return 0, err
+	}
+	qb, args, err := l.sq.Insert(like.getTableName()).
+		SetMap(insertMap).
+		ToSql()
+	if err != nil {
+		return 0, err
+	}
+	res, err := l.runner.ExecContext(ctx, qb, args...)
+	if err != nil {
+		return 0, err
+	}
+
+	return res.LastInsertId()
 }
 
 func (l likeQuery) Delete(ctx context.Context, like *Like) error {

@@ -15,6 +15,7 @@ const (
 	insertTag = "insert"
 	selectTag = "db"
 	updateTag = "update"
+	deleteTag = "delete"
 )
 
 func colNamesWithPref(cols []string, pref string) []string {
@@ -36,25 +37,6 @@ func colNamesWithPref(cols []string, pref string) []string {
 type dbElement interface {
 	columns(pref string) []string
 	getTableName() string
-}
-
-func insert(ctx context.Context, runner *sql.DB, sq squirrel.StatementBuilderType, dest dbElement) (int64, error) {
-	insertMap, err := stomPrefInsert.ToMap(dest)
-	if err != nil {
-		return 0, err
-	}
-	qb, args, err := sq.Insert(dest.getTableName()).
-		SetMap(insertMap).
-		ToSql()
-	if err != nil {
-		return 0, err
-	}
-	res, err := runner.ExecContext(ctx, qb, args...)
-	if err != nil {
-		return 0, err
-	}
-
-	return res.LastInsertId()
 }
 
 func getByID[T dbElement](ctx context.Context, runner *sql.DB, sq squirrel.StatementBuilderType, columnID string, id int64) (*T, error) {

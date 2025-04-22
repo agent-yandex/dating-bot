@@ -19,13 +19,12 @@ const (
 
 type City struct {
 	ID       int64  `db:"id" insert:"id"`
-	Name     string `db:"name" insert:"name" update:"name"`
+	Name     string `db:"name" insert:"name"`
 	Location string `db:"location" insert:"location" update:"location"`
 }
 
 var (
 	stomCitySelect = stom.MustNewStom(City{}).SetTag(selectTag)
-	stomCityUpdate = stom.MustNewStom(City{}).SetTag(updateTag)
 	stomCityInsert = stom.MustNewStom(City{}).SetTag(insertTag)
 )
 
@@ -74,5 +73,20 @@ func (c cityQuery) GetIDByName(ctx context.Context, name string) (*int64, error)
 }
 
 func (c cityQuery) Insert(ctx context.Context, city *City) (int64, error) {
-	return insert(ctx, c.runner, c.sq, city)
+	insertMap, err := stomCityInsert.ToMap(city)
+	if err != nil {
+		return 0, err
+	}
+	qb, args, err := c.sq.Insert(city.getTableName()).
+		SetMap(insertMap).
+		ToSql()
+	if err != nil {
+		return 0, err
+	}
+	res, err := c.runner.ExecContext(ctx, qb, args...)
+	if err != nil {
+		return 0, err
+	}
+
+	return res.LastInsertId()
 }

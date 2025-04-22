@@ -21,14 +21,15 @@ const (
 
 type Block struct {
 	ID        int64     `db:"id"`
-	BlockerID int64     `db:"blocker_id" insert:"blocker_id"`
-	BlockedID int64     `db:"blocked_id" insert:"blocked_id"`
+	BlockerID int64     `db:"blocker_id" insert:"blocker_id" delete:"blocker_id"`
+	BlockedID int64     `db:"blocked_id" insert:"blocked_id" delete:"blocked_id"`
 	CreatedAt time.Time `db:"created_at"`
 }
 
 var (
 	stomBlockSelect = stom.MustNewStom(Block{}).SetTag(selectTag)
 	stomBlockInsert = stom.MustNewStom(Block{}).SetTag(insertTag)
+	stomBlockDelete = stom.MustNewStom(Block{}).SetTag(deleteTag)
 )
 
 func (b Block) getTableName() string {
@@ -79,20 +80,39 @@ func (b blockQuery) GetAllByBlockerID(ctx context.Context, blockerID int64) ([]*
 }
 
 func (b blockQuery) Insert(ctx context.Context, block *Block) (int64, error) {
-	return insert(ctx, b.runner, b.sq, block)
+	insertMap, err := stomBlockInsert.ToMap(block)
+	if err != nil {
+		return 0, err
+	}
+	qb, args, err := b.sq.Insert(block.getTableName()).
+		SetMap(insertMap).
+		ToSql()
+	if err != nil {
+		return 0, err
+	}
+	res, err := b.runner.ExecContext(ctx, qb, args...)
+	if err != nil {
+		return 0, err
+	}
+
+	return res.LastInsertId()
 }
 
 func (b blockQuery) Delete(ctx context.Context, block *Block) error {
-	qb, args, err := b.sq.Delete(BlocksTable).
-		Where(squirrel.Eq{
-			BlocksBlockerID: block.BlockerID,
-			BlocksBlockedID: block.BlockedID,
-		}).
+	deleteMap, err := stomBlockDelete.ToMap(block)
+	if err != nil {
+		return err
+	}
+	qb, args, err := b.sq.Insert(block.getTableName()).
+		SetMap(deleteMap).
 		ToSql()
 	if err != nil {
 		return err
 	}
 	_, err = b.runner.ExecContext(ctx, qb, args...)
+	if err != nil {
+		return err
+	}
 
 	return err
 }

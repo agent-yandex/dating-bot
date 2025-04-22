@@ -68,7 +68,22 @@ func (up *userPreferencesQuery) GetByUserID(ctx context.Context, userID int64) (
 }
 
 func (up *userPreferencesQuery) Insert(ctx context.Context, pref *UserPreference) (int64, error) {
-	return insert(ctx, up.runner, up.sq, pref)
+	insertMap, err := stomPrefInsert.ToMap(pref)
+	if err != nil {
+		return 0, err
+	}
+	qb, args, err := up.sq.Insert(pref.getTableName()).
+		SetMap(insertMap).
+		ToSql()
+	if err != nil {
+		return 0, err
+	}
+	res, err := up.runner.ExecContext(ctx, qb, args...)
+	if err != nil {
+		return 0, err
+	}
+
+	return res.LastInsertId()
 }
 
 func (up *userPreferencesQuery) Update(ctx context.Context, pref *UserPreference) error {

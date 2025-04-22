@@ -83,7 +83,22 @@ func (u *userQuery) GetByID(ctx context.Context, id int64) (*User, error) {
 }
 
 func (u *userQuery) Insert(ctx context.Context, user *User) (int64, error) {
-	return insert(ctx, u.runner, u.sq, user)
+	insertMap, err := stomUserInsert.ToMap(user)
+	if err != nil {
+		return 0, err
+	}
+	qb, args, err := u.sq.Insert(user.getTableName()).
+		SetMap(insertMap).
+		ToSql()
+	if err != nil {
+		return 0, err
+	}
+	res, err := u.runner.ExecContext(ctx, qb, args...)
+	if err != nil {
+		return 0, err
+	}
+
+	return res.LastInsertId()
 }
 
 func (u *userQuery) Update(ctx context.Context, user *User) error {
