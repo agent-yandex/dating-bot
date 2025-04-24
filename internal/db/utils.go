@@ -1,14 +1,10 @@
 package db
 
 import (
-	"context"
-	"database/sql"
 	"fmt"
 	"sort"
 	"strings"
-
-	"github.com/Masterminds/squirrel"
-	"github.com/georgysavva/scany/v2/sqlscan"
+	"unicode"
 )
 
 const (
@@ -34,20 +30,17 @@ func colNamesWithPref(cols []string, pref string) []string {
 	return prefCols
 }
 
-type dbElement interface {
-	columns(pref string) []string
-	getTableName() string
-}
+func Capitalize(s string) string {
+	if len(s) == 0 {
+		return s
+	}
+	runes := []rune(s)
 
-func getByID[T dbElement](ctx context.Context, runner *sql.DB, sq squirrel.StatementBuilderType, columnID string, id int64) (*T, error) {
-	var result T
-	qb, args, err := sq.Select(result.columns("")...).
-		From(result.getTableName()).
-		Where(squirrel.Eq{columnID: id}).
-		ToSql()
-	if err != nil {
-		return nil, err
+	runes[0] = unicode.ToTitle(runes[0])
+
+	for i := 1; i < len(runes); i++ {
+		runes[i] = unicode.ToLower(runes[i])
 	}
 
-	return &result, sqlscan.Get(ctx, runner, &result, qb, args...)
+	return string(runes)
 }

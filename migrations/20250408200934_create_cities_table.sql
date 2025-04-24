@@ -39,7 +39,7 @@ COPY temp_geonames (
 
 INSERT INTO cities (name, location)
 SELECT 
-    RTRIM(REGEXP_REPLACE(SPLIT_PART(alternatenames, ',', -1), '[()]', '', 'g')) AS alt,
+    REGEXP_REPLACE(SPLIT_PART(lower(alternatenames), ',', -1), '[()]', '', 'g') AS alt,
     ST_GeogFromText('POINT(' || longitude || ' ' || latitude || ')') AS location
 FROM temp_geonames
 WHERE feature_class = 'P'
