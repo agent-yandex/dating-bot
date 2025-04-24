@@ -2,12 +2,16 @@ package db
 
 import (
 	"context"
-	"database/sql"
+	"errors"
+	"fmt"
 	"time"
 
 	"github.com/Masterminds/squirrel"
 	"github.com/elgris/stom"
-	"github.com/georgysavva/scany/v2/sqlscan"
+	"github.com/georgysavva/scany/v2/pgxscan"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"go.uber.org/zap"
 )
 
 const LikesTable = "likes"
@@ -33,85 +37,186 @@ type Like struct {
 var (
 	stomLikeSelect = stom.MustNewStom(Like{}).SetTag(selectTag)
 	stomLikeInsert = stom.MustNewStom(Like{}).SetTag(insertTag)
+	stomLikeDelete = stom.MustNewStom(Like{}).SetTag("delete")
 )
 
-func (l Like) getTableName() string {
-	return LikesTable
-}
-
-func (l Like) columns(pref string) []string {
-	return colNamesWithPref(
-		stomLikeSelect.TagValues(),
-		pref,
-	)
+func (l *Like) columns(pref string) []string {
+	return colNamesWithPref(stomLikeSelect.TagValues(), pref)
 }
 
 type LikeQuery interface {
 	GetByID(ctx context.Context, id int64) (*Like, error)
 	GetAllByToUserID(ctx context.Context, userID int64) ([]*Like, error)
-	Insert(ctx context.Context, like *Like) (int64, error)
+	Insert(ctx context.Context, like *Like) (*Like, error)
 	Delete(ctx context.Context, like *Like) error
 }
 
 type likeQuery struct {
-	runner *sql.DB
+	runner *pgxpool.Pool
 	sq     squirrel.StatementBuilderType
+	logger *zap.Logger
 }
 
-func NewLikeQuery(runner *sql.DB, sq squirrel.StatementBuilderType) LikeQuery {
+func NewLikeQuery(runner *pgxpool.Pool, sq squirrel.StatementBuilderType, logger *zap.Logger) LikeQuery {
 	return &likeQuery{
 		runner: runner,
 		sq:     sq,
+		logger: logger,
 	}
 }
 
 func (l likeQuery) GetByID(ctx context.Context, id int64) (*Like, error) {
-	return getByID[Like](ctx, l.runner, l.sq, UsersID, id)
+	l.logger.Debug("Fetching like by ID", zap.Int64("like_id", id))
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	like := &Like{}
+	qb, args, err := l.sq.Select(like.columns("")...).
+		From(LikesTable).
+		Where(squirrel.Eq{LikesID: id}).
+		ToSql()
+	if err != nil {
+		l.logger.Error("Failed to build query", zap.Error(err))
+		return nil, fmt.Errorf("failed to build query: %w", err)
+	}
+	err = pgxscan.Get(ctx, l.runner, like, qb, args...)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) {
+			l.logger.Warn("Database error",
+				zap.Int64("like_id", id),
+				zap.String("pg_error_code", pgErr.Code),
+				zap.Error(err),
+			)
+		} else {
+			l.logger.Warn("Failed to fetch like", zap.Int64("like_id", id), zap.Error(err))
+		}
+		return nil, fmt.Errorf("failed to execute query: %w", err)
+	}
+	l.logger.Info("Like fetched successfully", zap.Int64("like_id", id))
+	return like, nil
 }
 
 func (l likeQuery) GetAllByToUserID(ctx context.Context, userID int64) ([]*Like, error) {
+	l.logger.Debug("Fetching likes by to_user_id", zap.Int64("to_user_id", userID))
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
 	var likes []*Like
 	qb, args, err := l.sq.Select((&Like{}).columns("")...).
 		From(LikesTable).
 		Where(squirrel.Eq{LikesToUserID: userID}).
 		ToSql()
 	if err != nil {
-		return nil, err
+		l.logger.Error("Failed to build query", zap.Error(err))
+		return nil, fmt.Errorf("failed to build query: %w", err)
 	}
-
-	return likes, sqlscan.Select(ctx, l.runner, &likes, qb, args...)
+	err = pgxscan.Select(ctx, l.runner, &likes, qb, args...)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) {
+			l.logger.Warn("Database error",
+				zap.Int64("to_user_id", userID),
+				zap.String("pg_error_code", pgErr.Code),
+				zap.Error(err),
+			)
+		} else {
+			l.logger.Warn("Failed to fetch likes", zap.Int64("to_user_id", userID), zap.Error(err))
+		}
+		return nil, fmt.Errorf("failed to execute query: %w", err)
+	}
+	l.logger.Info("Likes fetched successfully",
+		zap.Int64("to_user_id", userID),
+		zap.Int("count", len(likes)),
+	)
+	return likes, nil
 }
 
-func (l likeQuery) Insert(ctx context.Context, like *Like) (int64, error) {
+func (l likeQuery) Insert(ctx context.Context, like *Like) (*Like, error) {
+	l.logger.Debug("Inserting like",
+		zap.Int64("from_user_id", like.FromUserID),
+		zap.Int64("to_user_id", like.ToUserID),
+	)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
 	insertMap, err := stomLikeInsert.ToMap(like)
 	if err != nil {
-		return 0, err
+		l.logger.Error("Failed to map struct", zap.Error(err))
+		return nil, fmt.Errorf("failed to map struct: %w", err)
 	}
-	qb, args, err := l.sq.Insert(like.getTableName()).
+	qb, args, err := l.sq.Insert(LikesTable).
 		SetMap(insertMap).
+		Suffix("RETURNING *").
 		ToSql()
 	if err != nil {
-		return 0, err
+		l.logger.Error("Failed to build query", zap.Error(err))
+		return nil, fmt.Errorf("failed to build query: %w", err)
 	}
-	res, err := l.runner.ExecContext(ctx, qb, args...)
+	err = pgxscan.Get(ctx, l.runner, like, qb, args...)
 	if err != nil {
-		return 0, err
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) {
+			l.logger.Warn("Database error",
+				zap.Int64("from_user_id", like.FromUserID),
+				zap.String("pg_error_code", pgErr.Code),
+				zap.Error(err),
+			)
+		} else {
+			l.logger.Error("Failed to insert like",
+				zap.Int64("from_user_id", like.FromUserID),
+				zap.Error(err),
+			)
+		}
+		return nil, fmt.Errorf("failed to execute query: %w", err)
 	}
-
-	return res.LastInsertId()
+	l.logger.Info("Like inserted successfully", zap.Int64("like_id", like.ID))
+	return like, nil
 }
 
 func (l likeQuery) Delete(ctx context.Context, like *Like) error {
+	l.logger.Debug("Deleting like",
+		zap.Int64("from_user_id", like.FromUserID),
+		zap.Int64("to_user_id", like.ToUserID),
+	)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	deleteMap, err := stomLikeDelete.ToMap(like)
+	if err != nil {
+		l.logger.Error("Failed to map struct", zap.Error(err))
+		return fmt.Errorf("failed to map struct: %w", err)
+	}
 	qb, args, err := l.sq.Delete(LikesTable).
 		Where(squirrel.Eq{
-			LikesToUserID:   like.ToUserID,
-			LikesFromUserID: like.FromUserID,
+			LikesFromUserID: deleteMap[LikesFromUserID],
+			LikesToUserID:   deleteMap[LikesToUserID],
 		}).
 		ToSql()
 	if err != nil {
-		return err
+		l.logger.Error("Failed to build query", zap.Error(err))
+		return fmt.Errorf("failed to build query: %w", err)
 	}
-
-	_, err = l.runner.ExecContext(ctx, qb, args...)
-	return err
+	_, err = l.runner.Exec(ctx, qb, args...)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) {
+			l.logger.Warn("Database error",
+				zap.Int64("from_user_id", like.FromUserID),
+				zap.String("pg_error_code", pgErr.Code),
+				zap.Error(err),
+			)
+		} else {
+			l.logger.Error("Failed to delete like",
+				zap.Int64("from_user_id", like.FromUserID),
+				zap.Error(err),
+			)
+		}
+		return fmt.Errorf("failed to execute query: %w", err)
+	}
+	l.logger.Info("Like deleted successfully",
+		zap.Int64("from_user_id", like.FromUserID),
+		zap.Int64("to_user_id", like.ToUserID),
+	)
+	return nil
 }
