@@ -29,11 +29,13 @@ const (
 	UsersIsPremium    = "is_premium"
 	UsersCreatedAt    = "created_at"
 	UsersUpdatedAt    = "updated_at"
+	TgUsername        = "tg_username"
 )
 
 type User struct {
 	ID           int64     `db:"id" insert:"id"`
 	Username     *string   `db:"username" insert:"username" update:"username"`
+	TgUsername   string    `db:"tg_username" insert:"tg_username"`
 	Gender       string    `db:"gender" insert:"gender" update:"gender"`
 	Age          int       `db:"age" insert:"age" update:"age"`
 	ProfilePhoto *string   `db:"profile_photo_url" insert_photo:"profile_photo_url" update_photo:"profile_photo_url"`
@@ -277,11 +279,13 @@ func (u userQuery) SelectUsers(ctx context.Context, id int64, offset uint64) ([]
 		InnerJoin("cities c_own ON u_own.city_id = c_own.id").
 		LeftJoin(BlocksTable+" b1 ON u.id = b1.blocked_id AND b1.blocker_id = ?", id).
 		LeftJoin(BlocksTable+" b2 ON u.id = b2.blocker_id AND b2.blocked_id = ?", id).
+		LeftJoin(LikesTable+" l ON l.from_user_id = ? AND l.to_user_id = u.id", id).
 		Where(squirrel.And{
 			squirrel.NotEq{"u.id": id},
 			squirrel.Eq{"u.is_active": true},
 			squirrel.Eq{"b1.id": nil},
 			squirrel.Eq{"b2.id": nil},
+			squirrel.Eq{"l.id": nil}, // Исключаем пользователей, которым текущий пользователь уже поставил лайк
 			squirrel.Expr("u.age >= up_own.min_age"),
 			squirrel.Expr("u.age <= up_own.max_age"),
 			squirrel.Or{
