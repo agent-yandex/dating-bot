@@ -10,6 +10,7 @@ func GetMainReplyKeyboard() gotgbot.ReplyKeyboardMarkup {
 			{{Text: "Посмотреть настройки поиска"}},
 			{{Text: "Изменить настройки поиска"}},
 			{{Text: "Поиск анкет"}},
+			{{Text: "Кто меня лайкнул"}},
 		},
 		ResizeKeyboard: true,
 	}

@@ -219,6 +219,7 @@ func (h *MessageHandler) finalizeProfile(b *gotgbot.Bot, ctx *ext.Context) error
 		_, err = h.db.Users.Update(context.Background(), user, userID)
 		successMessage = "Профиль обновлен! Что хотите сделать дальше?"
 	} else {
+		user.TgUsername = ctx.EffectiveUser.Username
 		user.ID = userID
 		_, err = h.db.Users.Insert(context.Background(), user)
 		_, err = h.db.UserPreferences.Insert(context.Background(), userID)

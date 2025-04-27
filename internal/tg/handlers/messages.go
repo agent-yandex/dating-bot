@@ -9,6 +9,7 @@ import (
 	"github.com/agent-yandex/dating-bot/internal/deps"
 	"github.com/agent-yandex/dating-bot/internal/tg/models"
 	"github.com/agent-yandex/dating-bot/internal/tg/states"
+	"github.com/go-redis/redis/v8"
 	"go.uber.org/zap"
 )
 
@@ -16,15 +17,19 @@ type MessageHandler struct {
 	stateMgr            *states.Manager
 	db                  *deps.DB
 	logger              *zap.Logger
+	redis               *redis.Client
+	callback            *CallbackHandler
 	tempUserData        map[int64]*models.TempUserData
 	tempUserPreferences map[int64]*models.TempUserPreferencesData
 	isEditing           map[int64]bool
 }
 
-func NewMessageHandler(stateMgr *states.Manager, db *deps.DB, logger *zap.Logger) *MessageHandler {
+func NewMessageHandler(stateMgr *states.Manager, db *deps.DB, redis *redis.Client, callback *CallbackHandler, logger *zap.Logger) *MessageHandler {
 	return &MessageHandler{
 		stateMgr:            stateMgr,
 		db:                  db,
+		redis:               redis,
+		callback:            callback,
 		logger:              logger,
 		tempUserData:        make(map[int64]*models.TempUserData),
 		tempUserPreferences: make(map[int64]*models.TempUserPreferencesData),
@@ -47,7 +52,6 @@ func (h *MessageHandler) handleMessage(b *gotgbot.Bot, ctx *ext.Context) error {
 	}
 
 	userID := ctx.Message.From.Id
-	chatID := ctx.Message.Chat.Id
 	currentState := h.stateMgr.Get(userID)
 
 	switch ctx.Message.Text {
@@ -60,8 +64,9 @@ func (h *MessageHandler) handleMessage(b *gotgbot.Bot, ctx *ext.Context) error {
 	case "Посмотреть настройки поиска":
 		return h.handleViewUserPreferences(b, ctx)
 	case "Поиск анкет":
-		_, err := b.SendMessage(chatID, "Функция поиска анкет пока в разработке!", nil)
-		return err
+		return h.handleSearching(b, ctx)
+	case "Кто меня лайкнул":
+		return h.handleViewLikes(b, ctx)
 	}
 
 	switch currentState {
@@ -83,6 +88,8 @@ func (h *MessageHandler) handleMessage(b *gotgbot.Bot, ctx *ext.Context) error {
 		return h.handlePrefMaxAge(b, ctx)
 	case states.StateEditPrefMaxDistance:
 		return h.handlePrefMaxDistance(b, ctx)
+	case states.StateSearching:
+		return h.handleSearching(b, ctx)
 	default:
 		return nil
 	}
