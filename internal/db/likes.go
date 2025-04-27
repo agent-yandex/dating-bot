@@ -27,8 +27,8 @@ const (
 
 type Like struct {
 	ID         int64     `db:"id"`
-	FromUserID int64     `db:"from_user_id" insert:"from_user_id"`
-	ToUserID   int64     `db:"to_user_id" insert:"to_user_id"`
+	FromUserID int64     `db:"from_user_id" insert:"from_user_id" delete:"from_user_id"`
+	ToUserID   int64     `db:"to_user_id" insert:"to_user_id" delete:"to_user_id"`
 	Message    *string   `db:"message" insert:"message"`
 	CreatedAt  time.Time `db:"created_at"`
 	ExpiresAt  time.Time `db:"expires_at"`
