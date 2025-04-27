@@ -260,38 +260,6 @@ func (u userQuery) UpdateActive(ctx context.Context, id int64, isActive bool) er
 }
 
 func (u userQuery) SelectUsers(ctx context.Context, id int64, offset uint64) ([]*User, error) {
-	//SELECT
-	//	u.id, u.username, u.first_name, u.last_name,
-	//	u.gender, u.age, u.bio, u.city_id, u.is_active
-	//FROM users u
-	//INNER JOIN
-	//	cities c ON u.city_id = c.id
-	//INNER JOIN
-	//	user_preferences up_own ON up_own.user_id = $1
-	//INNER JOIN
-	//	users u_own ON u_own.id = $2
-	//INNER JOIN
-	//	cities c_own ON u_own.city_id = c_own.id
-	//LEFT JOIN
-	//	blocks b1 ON u.id = b1.blocked_id AND b1.blocker_id = $3
-	//LEFT JOIN
-	//	blocks b2 ON u.id = b2.blocker_id AND b2.blocked_id = $4
-	//WHERE
-	//	u.id != $5
-	//AND u.is_active = true
-	//AND b1.id IS NULL
-	//AND b2.id IS NULL
-	//AND u.age >= up_own.min_age
-	//AND u.age <= up_own.max_age
-	//AND (
-	//	up_own.gender_preference = 'a'
-	//	OR u.gender = up_own.gender_preference
-	//)
-	//AND ST_Distance(c.location, c_own.location) <= up_own.max_distance_km * 1000
-	//ORDER BY
-	//u.id
-	//LIMIT 50
-	//OFFSET $6
 	u.logger.Debug("Selecting users",
 		zap.Int64("user_id", id),
 		zap.Uint64("offset", offset),
@@ -300,6 +268,7 @@ func (u userQuery) SelectUsers(ctx context.Context, id int64, offset uint64) ([]
 	defer cancel()
 
 	var users []*User
+
 	qb := u.sq.Select((&User{}).columns("u")...).
 		From(UsersTable+" u").
 		InnerJoin("cities c ON u.city_id = c.id").
@@ -313,15 +282,13 @@ func (u userQuery) SelectUsers(ctx context.Context, id int64, offset uint64) ([]
 			squirrel.Eq{"u.is_active": true},
 			squirrel.Eq{"b1.id": nil},
 			squirrel.Eq{"b2.id": nil},
-			squirrel.GtOrEq{"u.age": squirrel.Expr("up_own.min_age")},
-			squirrel.LtOrEq{"u.age": squirrel.Expr("up_own.max_age")},
+			squirrel.Expr("u.age >= up_own.min_age"),
+			squirrel.Expr("u.age <= up_own.max_age"),
 			squirrel.Or{
 				squirrel.Eq{"up_own.gender_preference": "a"},
-				squirrel.Eq{"u.gender": squirrel.Expr("up_own.gender_preference")},
+				squirrel.Expr("u.gender = up_own.gender_preference"),
 			},
-			squirrel.LtOrEq{
-				"ST_Distance(c.location, c_own.location)": squirrel.Expr("up_own.max_distance_km * 1000"),
-			},
+			squirrel.Expr("ST_Distance(c.location, c_own.location) <= up_own.max_distance_km * 1000"),
 		}).
 		OrderBy("u.id").
 		Limit(50).
@@ -332,6 +299,7 @@ func (u userQuery) SelectUsers(ctx context.Context, id int64, offset uint64) ([]
 		u.logger.Error("Failed to build query", zap.Error(err))
 		return nil, fmt.Errorf("failed to build query: %w", err)
 	}
+
 	err = pgxscan.Select(ctx, u.runner, &users, query, args...)
 	if err != nil {
 		var pgErr *pgconn.PgError
@@ -346,6 +314,7 @@ func (u userQuery) SelectUsers(ctx context.Context, id int64, offset uint64) ([]
 		}
 		return nil, fmt.Errorf("failed to execute query: %w", err)
 	}
+
 	u.logger.Info("Users selected successfully",
 		zap.Int64("user_id", id),
 		zap.Int("count", len(users)),

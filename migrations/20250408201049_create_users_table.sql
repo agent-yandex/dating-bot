@@ -3,6 +3,7 @@
 CREATE TABLE users (
     id bigint not null PRIMARY KEY,
     username varchar(32),
+    tg_username text,
     gender char(1) NOT NULL CHECK (gender IN ('m', 'f')),
     age integer NOT NULL CHECK (age >= 10 AND age <= 100),
     profile_photo_url varchar(255),

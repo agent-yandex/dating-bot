@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -61,7 +62,6 @@ func (h *MessageHandler) handlePrefGender(b *gotgbot.Bot, ctx *ext.Context) erro
 		gender = "f"
 	case "любой":
 		gender = "a"
-
 	default:
 		_, err := b.SendMessage(chatID, "Пожалуйста, выберите пол из предложенных вариантов:", &gotgbot.SendMessageOpts{
 			ReplyMarkup: gotgbot.ReplyKeyboardMarkup{
@@ -141,6 +141,7 @@ func (h *MessageHandler) handlePrefMaxDistance(b *gotgbot.Bot, ctx *ext.Context)
 	maxDistance, err := strconv.Atoi(input)
 	if err != nil || maxDistance <= 0 {
 		_, err = b.SendMessage(chatID, "Введите корректную область поиска, > 0:", nil)
+		return err
 	}
 	if _, exists := h.tempUserPreferences[userID]; !exists {
 		h.tempUserPreferences[userID] = &models.TempUserPreferencesData{}
@@ -162,15 +163,33 @@ func (h *MessageHandler) finalizeUserPreferences(b *gotgbot.Bot, ctx *ext.Contex
 	}
 
 	err := h.db.UserPreferences.Update(context.Background(), userPref, userID)
-	successMessage := "Настройки поиска обновлены! Что хотите сделать дальше?"
-
 	if err != nil {
 		h.logger.Error("Failed to save profile", zap.Int64("user_id", userID), zap.Error(err))
 		_, err = b.SendMessage(chatID, "Произошла ошибка при сохранении профиля. Попробуйте позже.", nil)
 		return err
 	}
 
-	delete(h.tempUserData, userID)
+	// Сбрасываем текущий поиск
+	h.stateMgr.ResetCurrentIndex(userID)
+	// Очищаем кэш анкет в Redis
+	ctxRedis := context.Background()
+	keys, err := h.redis.Keys(ctxRedis, fmt.Sprintf("search:%d:*", userID)).Result()
+	if err != nil {
+		h.logger.Error("Failed to fetch search cache keys",
+			zap.Int64("user_id", userID),
+			zap.Error(err))
+	} else if len(keys) > 0 {
+		_, err = h.redis.Del(ctxRedis, keys...).Result()
+		if err != nil {
+			h.logger.Error("Failed to delete search cache",
+				zap.Int64("user_id", userID),
+				zap.Error(err))
+		}
+	}
+
+	successMessage := "Настройки поиска обновлены! Что хотите сделать дальше?"
+
+	delete(h.tempUserPreferences, userID)
 	delete(h.isEditing, userID)
 	h.stateMgr.Reset(userID)
 

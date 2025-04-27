@@ -11,14 +11,12 @@ import (
 	"go.uber.org/zap"
 )
 
-// CommandHandler manages command handling for the Telegram bot.
 type CommandHandler struct {
 	db       *deps.DB
 	logger   *zap.Logger
 	stateMgr *states.Manager
 }
 
-// NewCommandHandler creates a new instance of CommandHandler.
 func NewCommandHandler(db *deps.DB, logger *zap.Logger, stateMgr *states.Manager) *CommandHandler {
 	return &CommandHandler{
 		db:       db,
@@ -27,12 +25,10 @@ func NewCommandHandler(db *deps.DB, logger *zap.Logger, stateMgr *states.Manager
 	}
 }
 
-// RegisterCommands registers the command handlers with the dispatcher.
 func (h *CommandHandler) RegisterCommands(d *ext.Dispatcher) {
 	d.AddHandler(handlers.NewCommand("start", h.handleStart))
 }
 
-// handleStart processes the /start command.
 func (h *CommandHandler) handleStart(b *gotgbot.Bot, ctx *ext.Context) error {
 	userID := ctx.Message.From.Id
 	chatID := ctx.Message.Chat.Id
@@ -52,7 +48,6 @@ func (h *CommandHandler) handleStart(b *gotgbot.Bot, ctx *ext.Context) error {
 			{{Text: "Создать/редактировать профиль"}},
 		}
 	} else {
-		// Profile exists
 		keyboard = [][]gotgbot.KeyboardButton{
 			{{Text: "Посмотреть профиль"}},
 			{{Text: "Создать/редактировать профиль"}},
@@ -62,7 +57,6 @@ func (h *CommandHandler) handleStart(b *gotgbot.Bot, ctx *ext.Context) error {
 		}
 	}
 
-	// Send welcome message with reply keyboard
 	_, err = b.SendMessage(chatID, welcomeMessage, &gotgbot.SendMessageOpts{
 		ReplyMarkup: gotgbot.ReplyKeyboardMarkup{
 			Keyboard:       keyboard,

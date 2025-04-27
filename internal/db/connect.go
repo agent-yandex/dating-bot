@@ -22,7 +22,6 @@ func InitDB(cfg config.AppConfig, logger *zap.Logger) (*pgxpool.Pool, error) {
 		cfg.DBHost, cfg.DBPort, cfg.DBUser, cfg.DBPassword, cfg.DBName,
 	)
 
-	// Настраиваем конфигурацию пула
 	poolConfig, err := pgxpool.ParseConfig(connStr)
 	if err != nil {
 		logger.Error("Failed to parse database config", zap.Error(err))
