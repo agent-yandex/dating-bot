@@ -17,7 +17,7 @@ type CommandHandler struct {
 	stateMgr *states.Manager
 }
 
-func NewCommandHandler(db *deps.DB, logger *zap.Logger, stateMgr *states.Manager) *CommandHandler {
+func NewCommandHandler(stateMgr *states.Manager, db *deps.DB, logger *zap.Logger) *CommandHandler {
 	return &CommandHandler{
 		db:       db,
 		logger:   logger,
@@ -54,6 +54,7 @@ func (h *CommandHandler) handleStart(b *gotgbot.Bot, ctx *ext.Context) error {
 			{{Text: "Изменить настройки поиска"}},
 			{{Text: "Посмотреть настройки поиска"}},
 			{{Text: "Поиск анкет"}},
+			{{Text: "Кто меня лайкнул"}},
 		}
 	}
 

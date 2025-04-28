@@ -169,9 +169,7 @@ func (h *MessageHandler) finalizeUserPreferences(b *gotgbot.Bot, ctx *ext.Contex
 		return err
 	}
 
-	// Сбрасываем текущий поиск
 	h.stateMgr.ResetCurrentIndex(userID)
-	// Очищаем кэш анкет в Redis
 	ctxRedis := context.Background()
 	keys, err := h.redis.Keys(ctxRedis, fmt.Sprintf("search:%d:*", userID)).Result()
 	if err != nil {

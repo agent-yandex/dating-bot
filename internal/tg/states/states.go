@@ -15,4 +15,5 @@ const (
 	StateEditPrefMaxDistance State = "edit_pref_max_distance"
 	StateSearching           State = "searching"
 	StateViewLikes           State = "view_likes"
+	StateEditPhoto           State = "editing_photo"
 )
