@@ -27,6 +27,7 @@ const (
 	UsersBio          = "bio"
 	UsersIsActive     = "is_active"
 	UsersIsPremium    = "is_premium"
+	UsersRating       = "rating"
 	UsersCreatedAt    = "created_at"
 	UsersUpdatedAt    = "updated_at"
 	TgUsername        = "tg_username"
@@ -43,6 +44,7 @@ type User struct {
 	Bio          *string   `db:"bio" insert:"bio" update:"bio"`
 	IsActive     bool      `db:"is_active" insert_active:"is_active" update_active:"is_active"`
 	IsPremium    bool      `db:"is_premium"`
+	Rating       int       `db:"rating"`
 	CreatedAt    time.Time `db:"created_at"`
 	UpdatedAt    time.Time `db:"updated_at"`
 }
@@ -63,6 +65,7 @@ type UserQuery interface {
 	Update(ctx context.Context, user *User, id int64) (*User, error)
 	UpdateProfilePhoto(ctx context.Context, id int64, profilePhoto *string) error
 	UpdateActive(ctx context.Context, id int64, isActive bool) error
+	UpdateRating(ctx context.Context, id int64) error
 	SelectUsers(ctx context.Context, id int64, offset uint64) ([]*User, error)
 	Delete(ctx context.Context, id int64) error
 }
@@ -95,6 +98,7 @@ func (u userQuery) GetByID(ctx context.Context, id int64) (*User, error) {
 		u.logger.Error("Failed to build query", zap.Error(err))
 		return nil, fmt.Errorf("failed to build query: %w", err)
 	}
+
 	err = pgxscan.Get(ctx, u.runner, user, qb, args...)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -285,7 +289,7 @@ func (u userQuery) SelectUsers(ctx context.Context, id int64, offset uint64) ([]
 			squirrel.Eq{"u.is_active": true},
 			squirrel.Eq{"b1.id": nil},
 			squirrel.Eq{"b2.id": nil},
-			squirrel.Eq{"l.id": nil}, // Исключаем пользователей, которым текущий пользователь уже поставил лайк
+			squirrel.Eq{"l.id": nil},
 			squirrel.Expr("u.age >= up_own.min_age"),
 			squirrel.Expr("u.age <= up_own.max_age"),
 			squirrel.Or{
@@ -294,7 +298,7 @@ func (u userQuery) SelectUsers(ctx context.Context, id int64, offset uint64) ([]
 			},
 			squirrel.Expr("ST_Distance(c.location, c_own.location) <= up_own.max_distance_km * 1000"),
 		}).
-		OrderBy("u.id").
+		OrderBy("u.rating DESC, u.id").
 		Limit(50).
 		Offset(offset)
 
@@ -361,5 +365,63 @@ func (u userQuery) Delete(ctx context.Context, id int64) error {
 	}
 
 	u.logger.Info("User deleted successfully", zap.Int64("user_id", id))
+	return nil
+}
+
+func (u userQuery) UpdateRating(ctx context.Context, userID int64) error {
+	u.logger.Debug("Updating user rating", zap.Int64("user_id", userID))
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	var rating int
+	query := `
+		SELECT COUNT(*)
+		FROM likes
+		WHERE to_user_id = $1
+		AND expires_at > NOW()
+	`
+	err := u.runner.QueryRow(ctx, query, userID).Scan(&rating)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) {
+			u.logger.Warn("Database error",
+				zap.Int64("user_id", userID),
+				zap.String("pg_error_code", pgErr.Code),
+				zap.Error(err),
+			)
+		} else {
+			u.logger.Error("Failed to count likes for rating", zap.Int64("user_id", userID), zap.Error(err))
+		}
+		return fmt.Errorf("failed to count likes: %w", err)
+	}
+
+	// Обновляем рейтинг в таблице users
+	updateMap := map[string]interface{}{
+		UsersRating: rating,
+	}
+	qb, args, err := u.sq.Update(UsersTable).
+		SetMap(updateMap).
+		Where(squirrel.Eq{UsersID: userID}).
+		ToSql()
+	if err != nil {
+		u.logger.Error("Failed to build query", zap.Error(err))
+		return fmt.Errorf("failed to build query: %w", err)
+	}
+	_, err = u.runner.Exec(ctx, qb, args...)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) {
+			u.logger.Warn("Database error",
+				zap.Int64("user_id", userID),
+				zap.String("pg_error_code", pgErr.Code),
+				zap.Error(err),
+			)
+		} else {
+			u.logger.Error("Failed to update rating", zap.Int64("user_id", userID), zap.Error(err))
+		}
+		return fmt.Errorf("failed to execute query: %w", err)
+	}
+
+	u.logger.Info("Rating updated successfully", zap.Int64("user_id", userID), zap.Int("rating", rating))
 	return nil
 }

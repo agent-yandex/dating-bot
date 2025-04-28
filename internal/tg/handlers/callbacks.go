@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/agent-yandex/dating-bot/internal/deps"
 	"github.com/agent-yandex/dating-bot/internal/tg/states"
 	"github.com/go-redis/redis/v8"
+	"github.com/jackc/pgx/v5/pgconn"
 	"go.uber.org/zap"
 )
 
@@ -91,12 +93,28 @@ func (h *CallbackHandler) handleLike(b *gotgbot.Bot, ctx *ext.Context, userID, p
 
 	_, err := h.db.Likes.Insert(context.Background(), like)
 	if err != nil {
-		h.logger.Error("Failed to insert like",
-			zap.Int64("from_user_id", userID),
-			zap.Int64("to_user_id", profileID),
-			zap.Error(err))
-		_, _ = b.SendMessage(chatID, "Произошла ошибка при сохранении лайка.", nil)
-		return err
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			h.logger.Info("User already liked profile",
+				zap.Int64("from_user_id", userID),
+				zap.Int64("to_user_id", profileID))
+			_, _ = b.SendMessage(chatID, "Вы уже лайкнули этого пользователя.", nil)
+		} else {
+			h.logger.Error("Failed to insert like",
+				zap.Int64("from_user_id", userID),
+				zap.Int64("to_user_id", profileID),
+				zap.Error(err))
+			_, _ = b.SendMessage(chatID, "Произошла ошибка при сохранении лайка.", nil)
+			return err
+		}
+	} else {
+		// Обновляем рейтинг пользователя, получившего лайк
+		if err := h.db.Users.UpdateRating(context.Background(), profileID); err != nil {
+			h.logger.Error("Failed to update rating",
+				zap.Int64("user_id", profileID),
+				zap.Error(err))
+			// Продолжаем, так как ошибка не критична для пользовательского опыта
+		}
 	}
 
 	mutualLikes, err := h.db.Likes.GetAllByToUserID(context.Background(), userID)
@@ -107,7 +125,59 @@ func (h *CallbackHandler) handleLike(b *gotgbot.Bot, ctx *ext.Context, userID, p
 	} else {
 		for _, l := range mutualLikes {
 			if l.FromUserID == profileID {
-				err = h.notifyMutualLike(b, userID, profileID)
+				// Удаляем лайк от profileID к userID
+				err = h.db.Likes.DeleteByIDs(context.Background(), profileID, userID)
+				if err != nil {
+					h.logger.Error("Failed to delete like",
+						zap.Int64("from_user_id", profileID),
+						zap.Int64("to_user_id", userID),
+						zap.Error(err))
+					// Продолжаем, так как лайк уже записан
+				}
+
+				// Удаляем лайк от userID к profileID
+				err = h.db.Likes.DeleteByIDs(context.Background(), userID, profileID)
+				if err != nil {
+					h.logger.Error("Failed to delete mutual like",
+						zap.Int64("from_user_id", userID),
+						zap.Int64("to_user_id", profileID),
+						zap.Error(err))
+					// Продолжаем, так как первый лайк уже удалён
+				}
+
+				// Обновляем рейтинг обоих пользователей
+				for _, uid := range []int64{userID, profileID} {
+					if err := h.db.Users.UpdateRating(context.Background(), uid); err != nil {
+						h.logger.Error("Failed to update rating",
+							zap.Int64("user_id", uid),
+							zap.Error(err))
+						// Продолжаем, так как ошибка не критична
+					}
+				}
+
+				// Очищаем кэш Redis для списка лайков обоих пользователей
+				ctx := context.Background()
+				for _, uid := range []int64{userID, profileID} {
+					keys, err := h.redis.Keys(ctx, fmt.Sprintf("likes:%d:*", uid)).Result()
+					if err != nil {
+						h.logger.Error("Failed to get Redis keys for likes cache",
+							zap.Int64("user_id", uid),
+							zap.Error(err))
+					} else if len(keys) > 0 {
+						if err := h.redis.Del(ctx, keys...).Err(); err != nil {
+							h.logger.Error("Failed to delete Redis keys for likes cache",
+								zap.Int64("user_id", uid),
+								zap.Error(err))
+						} else {
+							h.logger.Info("Cleared likes cache",
+								zap.Int64("user_id", uid),
+								zap.Strings("keys", keys))
+						}
+					}
+				}
+
+				// Отправляем уведомления о взаимном лайке
+				err = h.notifyMutualLikeWithLinks(b, userID, profileID)
 				if err != nil {
 					h.logger.Error("Failed to notify mutual like",
 						zap.Int64("user1_id", userID),
@@ -189,31 +259,88 @@ func (h *CallbackHandler) handleLikeFromLikes(b *gotgbot.Bot, ctx *ext.Context, 
 
 	_, err := h.db.Likes.Insert(context.Background(), like)
 	if err != nil {
-		h.logger.Error("Failed to insert like",
-			zap.Int64("from_user_id", userID),
-			zap.Int64("to_user_id", profileID),
-			zap.Error(err))
-		_, _ = b.SendMessage(chatID, "Произошла ошибка при сохранении лайка.", nil)
-		return err
-	}
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			h.logger.Info("User already liked profile",
+				zap.Int64("from_user_id", userID),
+				zap.Int64("to_user_id", profileID))
+			_, _ = b.SendMessage(chatID, "Вы уже лайкнули этого пользователя.", nil)
+		} else {
+			h.logger.Error("Failed to insert like",
+				zap.Int64("from_user_id", userID),
+				zap.Int64("to_user_id", profileID),
+				zap.Error(err))
+			_, _ = b.SendMessage(chatID, "Произошла ошибка при сохранении лайка.", nil)
+			return err
+		}
+	} else {
+		// Обновляем рейтинг пользователя, получившего лайк
+		if err := h.db.Users.UpdateRating(context.Background(), profileID); err != nil {
+			h.logger.Error("Failed to update rating",
+				zap.Int64("user_id", profileID),
+				zap.Error(err))
+			// Продолжаем, так как ошибка не критична
+		}
 
-	// Удаляем лайк от profileID к userID
-	err = h.db.Likes.DeleteByIDs(context.Background(), profileID, userID)
-	if err != nil {
-		h.logger.Error("Failed to delete like",
-			zap.Int64("from_user_id", profileID),
-			zap.Int64("to_user_id", userID),
-			zap.Error(err))
-		// Продолжаем, так как лайк уже записан
-	}
+		// Удаляем лайк от profileID к userID
+		err = h.db.Likes.DeleteByIDs(context.Background(), profileID, userID)
+		if err != nil {
+			h.logger.Error("Failed to delete like",
+				zap.Int64("from_user_id", profileID),
+				zap.Int64("to_user_id", userID),
+				zap.Error(err))
+			// Продолжаем, так как лайк уже записан
+		}
 
-	// Отправляем уведомления о взаимном лайке
-	err = h.notifyMutualLikeWithLinks(b, userID, profileID)
-	if err != nil {
-		h.logger.Error("Failed to notify mutual like",
-			zap.Int64("user1_id", userID),
-			zap.Int64("user2_id", profileID),
-			zap.Error(err))
+		// Удаляем лайк от userID к profileID
+		err = h.db.Likes.DeleteByIDs(context.Background(), userID, profileID)
+		if err != nil {
+			h.logger.Error("Failed to delete mutual like",
+				zap.Int64("from_user_id", userID),
+				zap.Int64("to_user_id", profileID),
+				zap.Error(err))
+			// Продолжаем, так как первый лайк уже удалён
+		}
+
+		// Обновляем рейтинг обоих пользователей
+		for _, uid := range []int64{userID, profileID} {
+			if err := h.db.Users.UpdateRating(context.Background(), uid); err != nil {
+				h.logger.Error("Failed to update rating",
+					zap.Int64("user_id", uid),
+					zap.Error(err))
+				// Продолжаем, так как ошибка не критична
+			}
+		}
+
+		// Очищаем кэш Redis для списка лайков обоих пользователей
+		ctx := context.Background()
+		for _, uid := range []int64{userID, profileID} {
+			keys, err := h.redis.Keys(ctx, fmt.Sprintf("likes:%d:*", uid)).Result()
+			if err != nil {
+				h.logger.Error("Failed to get Redis keys for likes cache",
+					zap.Int64("user_id", uid),
+					zap.Error(err))
+			} else if len(keys) > 0 {
+				if err := h.redis.Del(ctx, keys...).Err(); err != nil {
+					h.logger.Error("Failed to delete Redis keys for likes cache",
+						zap.Int64("user_id", uid),
+						zap.Error(err))
+				} else {
+					h.logger.Info("Cleared likes cache",
+						zap.Int64("user_id", uid),
+						zap.Strings("keys", keys))
+				}
+			}
+		}
+
+		// Отправляем уведомления о взаимном лайке
+		err = h.notifyMutualLikeWithLinks(b, userID, profileID)
+		if err != nil {
+			h.logger.Error("Failed to notify mutual like",
+				zap.Int64("user1_id", userID),
+				zap.Int64("user2_id", profileID),
+				zap.Error(err))
+		}
 	}
 
 	_, err = b.DeleteMessage(chatID, messageID, nil)
@@ -244,7 +371,6 @@ func (h *CallbackHandler) handleDislikeFromLikes(b *gotgbot.Bot, ctx *ext.Contex
 	chatID := ctx.CallbackQuery.Message.GetChat().Id
 	messageID := ctx.CallbackQuery.Message.GetMessageId()
 
-	// Удаляем лайк от profileID к userID
 	err := h.db.Likes.DeleteByIDs(context.Background(), profileID, userID)
 	if err != nil {
 		h.logger.Error("Failed to delete like",
@@ -253,6 +379,14 @@ func (h *CallbackHandler) handleDislikeFromLikes(b *gotgbot.Bot, ctx *ext.Contex
 			zap.Error(err))
 		_, _ = b.SendMessage(chatID, "Произошла ошибка при удалении лайка.", nil)
 		return err
+	}
+
+	// Обновляем рейтинг пользователя, чей лайк удалён
+	if err := h.db.Users.UpdateRating(context.Background(), userID); err != nil {
+		h.logger.Error("Failed to update rating",
+			zap.Int64("user_id", userID),
+			zap.Error(err))
+		// Продолжаем, так как ошибка не критична
 	}
 
 	_, err = b.DeleteMessage(chatID, messageID, nil)
@@ -279,48 +413,6 @@ func (h *CallbackHandler) handleDislikeFromLikes(b *gotgbot.Bot, ctx *ext.Contex
 	return h.sendLikeProfile(b, chatID, userID, profiles, currentIndex%10)
 }
 
-func (h *CallbackHandler) notifyMutualLike(b *gotgbot.Bot, userID1, userID2 int64) error {
-	user1, err := h.db.Users.GetByID(context.Background(), userID1)
-	if err != nil {
-		return err
-	}
-	user2, err := h.db.Users.GetByID(context.Background(), userID2)
-	if err != nil {
-		return err
-	}
-
-	user1Name := "Пользователь"
-	if user1.Username != nil {
-		user1Name = *user1.Username
-	}
-	user2Name := "Пользователь"
-	if user2.Username != nil {
-		user2Name = *user2.Username
-	}
-
-	user1ChatID := userID1
-	_, err = b.SendMessage(user1ChatID,
-		fmt.Sprintf("Взаимный лайк! 💕 Вы понравились %s!", user2Name),
-		&gotgbot.SendMessageOpts{ParseMode: "HTML"})
-	if err != nil {
-		h.logger.Error("Failed to notify user1",
-			zap.Int64("user_id", userID1),
-			zap.Error(err))
-	}
-
-	user2ChatID := userID2
-	_, err = b.SendMessage(user2ChatID,
-		fmt.Sprintf("Взаимный лайк! 💕 Вы понравились %s!", user1Name),
-		&gotgbot.SendMessageOpts{ParseMode: "HTML"})
-	if err != nil {
-		h.logger.Error("Failed to notify user2",
-			zap.Int64("user_id", userID2),
-			zap.Error(err))
-	}
-
-	return nil
-}
-
 func (h *CallbackHandler) notifyMutualLikeWithLinks(b *gotgbot.Bot, userID1, userID2 int64) error {
 	user1, err := h.db.Users.GetByID(context.Background(), userID1)
 	if err != nil {
@@ -332,13 +424,30 @@ func (h *CallbackHandler) notifyMutualLikeWithLinks(b *gotgbot.Bot, userID1, use
 	}
 
 	user1Name := "Пользователь"
-	user1Link := fmt.Sprintf("@%s", user1.TgUsername)
-	
+	user1Link := fmt.Sprintf("tg://user?id=%d", userID1)
+	if user1.Username != nil {
+		user1Name = *user1.Username
+	}
+
 	user2Name := "Пользователь"
-	user2Link := fmt.Sprintf("@%s", user2.TgUsername)
+	user2Link := fmt.Sprintf("tg://user?id=%d", userID2)
+	if user2.Username != nil {
+		user2Name = *user2.Username
+	}
 
 	user1ChatID := userID1
-	user2Profile := FormatProfile(user2, "")
+	var cityName string
+	if user2.CityID != nil {
+		city, err := h.db.Cities.GetByID(context.Background(), *user2.CityID)
+		if err != nil {
+			h.logger.Error("Failed to get city for user2",
+				zap.Int64("user_id", userID2),
+				zap.Error(err))
+		} else {
+			cityName = city.Name
+		}
+	}
+	user2Profile := FormatProfile(user2, cityName)
 	_, err = b.SendMessage(user1ChatID,
 		fmt.Sprintf("Взаимный лайк! 💕 Вы понравились %s!\n\n%s\nСвязаться: %s", user2Name, user2Profile, user2Link),
 		&gotgbot.SendMessageOpts{ParseMode: "HTML"})
@@ -349,7 +458,18 @@ func (h *CallbackHandler) notifyMutualLikeWithLinks(b *gotgbot.Bot, userID1, use
 	}
 
 	user2ChatID := userID2
-	user1Profile := FormatProfile(user1, "")
+	cityName = ""
+	if user1.CityID != nil {
+		city, err := h.db.Cities.GetByID(context.Background(), *user1.CityID)
+		if err != nil {
+			h.logger.Error("Failed to get city for user1",
+				zap.Int64("user_id", userID1),
+				zap.Error(err))
+		} else {
+			cityName = city.Name
+		}
+	}
+	user1Profile := FormatProfile(user1, cityName)
 	_, err = b.SendMessage(user2ChatID,
 		fmt.Sprintf("Взаимный лайк! 💕 Вы понравились %s!\n\n%s\nСвязаться: %s", user1Name, user1Profile, user1Link),
 		&gotgbot.SendMessageOpts{ParseMode: "HTML"})
@@ -440,7 +560,18 @@ func (h *CallbackHandler) sendProfile(b *gotgbot.Bot, chatID, userID int64, prof
 	}
 
 	profile := profiles[currentIndex]
-	profileText := FormatProfile(profile, "")
+	var cityName string
+	if profile.CityID != nil {
+		city, err := h.db.Cities.GetByID(context.Background(), *profile.CityID)
+		if err != nil {
+			h.logger.Error("Failed to get city for profile",
+				zap.Int64("user_id", profile.ID),
+				zap.Error(err))
+		} else {
+			cityName = city.Name
+		}
+	}
+	profileText := FormatProfile(profile, cityName)
 
 	keyboard := [][]gotgbot.InlineKeyboardButton{
 		{
@@ -476,7 +607,24 @@ func (h *CallbackHandler) sendLikeProfile(b *gotgbot.Bot, chatID, userID int64, 
 
 		if len(nextProfiles) == 0 {
 			h.stateMgr.ResetLikesCurrentIndex(userID)
-			_, err := b.SendMessage(chatID, "Больше лайков не найдено.", nil)
+			ctx := context.Background()
+			keys, err := h.redis.Keys(ctx, fmt.Sprintf("likes:%d:*", userID)).Result()
+			if err != nil {
+				h.logger.Error("Failed to get Redis keys for likes cache",
+					zap.Int64("user_id", userID),
+					zap.Error(err))
+			} else if len(keys) > 0 {
+				if err := h.redis.Del(ctx, keys...).Err(); err != nil {
+					h.logger.Error("Failed to delete Redis keys for likes cache",
+						zap.Int64("user_id", userID),
+						zap.Error(err))
+				} else {
+					h.logger.Info("Cleared likes cache",
+						zap.Int64("user_id", userID),
+						zap.Strings("keys", keys))
+				}
+			}
+			_, err = b.SendMessage(chatID, "Больше лайков не найдено.", nil)
 			return err
 		}
 
@@ -486,7 +634,18 @@ func (h *CallbackHandler) sendLikeProfile(b *gotgbot.Bot, chatID, userID int64, 
 	}
 
 	profile := profiles[currentIndex]
-	profileText := FormatProfile(profile, "")
+	var cityName string
+	if profile.CityID != nil {
+		city, err := h.db.Cities.GetByID(context.Background(), *profile.CityID)
+		if err != nil {
+			h.logger.Error("Failed to get city for profile",
+				zap.Int64("user_id", profile.ID),
+				zap.Error(err))
+		} else {
+			cityName = city.Name
+		}
+	}
+	profileText := FormatProfile(profile, cityName)
 
 	keyboard := [][]gotgbot.InlineKeyboardButton{
 		{
